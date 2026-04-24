@@ -73,6 +73,7 @@ export interface ChatMessage {
   role: "ai" | "user";
   content: string;
   timestamp: number;
+  audioUrl?: string; // 语音URL
 }
 
 // 游戏状态

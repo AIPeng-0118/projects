@@ -154,21 +154,51 @@ export function parseGameResponse(content: string): {
       typeof parsed.message !== "string" ||
       typeof parsed.affectionChange !== "number" ||
       !parsed.options ||
-      parsed.options.length !== 6
+      !Array.isArray(parsed.options) ||
+      parsed.options.length === 0
     ) {
+      console.log("解析失败 - 字段验证失败:", {
+        hasMessage: typeof parsed.message === "string",
+        hasAffectionChange: typeof parsed.affectionChange === "number",
+        hasOptions: !!parsed.options,
+        isOptionsArray: Array.isArray(parsed.options),
+        optionsLength: parsed.options?.length
+      });
       return null;
     }
 
-    // 确保有2个好选项和4个坏选项
-    const goodCount = parsed.options.filter((o: { isGood: boolean }) => o.isGood).length;
-    const badCount = parsed.options.filter((o: { isGood: boolean }) => !o.isGood).length;
+    // 处理选项 - 确保有2个好选项和4个坏选项
+    const goodOptions = (parsed.options || []).filter((o: { isGood: boolean }) => o.isGood);
+    const badOptions = (parsed.options || []).filter((o: { isGood: boolean }) => !o.isGood);
 
-    if (goodCount !== 2 || badCount !== 4) {
-      return null;
+    console.log("选项解析结果:", {
+      总选项数: parsed.options.length,
+      好选项数: goodOptions.length,
+      坏选项数: badOptions.length
+    });
+
+    // 确保恰好2个好选项和4个坏选项
+    let selectedGoodOptions = goodOptions.slice(0, 2);
+    let selectedBadOptions = badOptions.slice(0, 4);
+
+    // 如果好选项不够，从坏选项中补充
+    if (selectedGoodOptions.length < 2) {
+      const needed = 2 - selectedGoodOptions.length;
+      const extraBadOptions = badOptions.slice(0, needed);
+      selectedGoodOptions = [...selectedGoodOptions, ...extraBadOptions.map((o: any) => ({ ...o, isGood: true }))];
     }
+
+    // 如果坏选项不够，从好选项中补充
+    if (selectedBadOptions.length < 4) {
+      const needed = 4 - selectedBadOptions.length;
+      const extraGoodOptions = goodOptions.slice(0, needed);
+      selectedBadOptions = [...selectedBadOptions, ...extraGoodOptions.map((o: any) => ({ ...o, isGood: false }))];
+    }
+
+    // 组合选项
+    const optionsArray = [...selectedGoodOptions, ...selectedBadOptions];
 
     // 添加ID并打乱顺序
-    const optionsArray = parsed.options as Array<{ text: string; isGood: boolean }>;
     const options = shuffleArray(
       optionsArray.map((o, i) => ({
         id: String(i + 1),
@@ -183,7 +213,8 @@ export function parseGameResponse(content: string): {
       emotionState: parsed.emotionState || getEmotionState(parsed.affectionChange || 0),
       options,
     };
-  } catch {
+  } catch (error) {
+    console.error("解析异常:", error);
     return null;
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import { getUserByUsername, createUser } from "@/lib/db";
+import { getSupabaseClient, getSupabaseServiceRoleKey } from "@/storage/database/supabase-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,8 +28,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 使用service role key来绕过RLS限制
+    const serviceRoleKey = getSupabaseServiceRoleKey();
+    if (!serviceRoleKey) {
+      console.error("Service role key not found");
+      return NextResponse.json(
+        { success: false, error: "服务器配置错误，请联系管理员" },
+        { status: 500 }
+      );
+    }
+
+    // 使用service role创建客户端
+    const client = getSupabaseClient(serviceRoleKey);
+
     // 检查用户名是否已存在
-    const existingUser = await getUserByUsername(username);
+    const { data: existingUser, error: checkError } = await client
+      .from("users")
+      .select("id")
+      .eq("username", username)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error("检查用户失败:", checkError);
+      return NextResponse.json(
+        { success: false, error: "数据库查询失败" },
+        { status: 500 }
+      );
+    }
+
     if (existingUser) {
       return NextResponse.json(
         { success: false, error: "用户名已被注册" },
@@ -40,8 +66,30 @@ export async function POST(request: NextRequest) {
     // 哈希密码
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 创建用户
-    const user = await createUser(username, hashedPassword);
+    // 创建用户（使用service role绕过RLS）
+    const { data: user, error: insertError } = await client
+      .from("users")
+      .insert({ 
+        username, 
+        password: hashedPassword 
+      })
+      .select()
+      .maybeSingle();
+
+    if (insertError) {
+      console.error("创建用户失败:", insertError);
+      return NextResponse.json(
+        { success: false, error: `注册失败: ${insertError.message}` },
+        { status: 500 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "用户创建失败" },
+        { status: 500 }
+      );
+    }
 
     // 返回成功响应（不包含密码）
     return NextResponse.json({

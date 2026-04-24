@@ -66,6 +66,7 @@ export default function GamePage() {
   const searchParams = useSearchParams();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const messageIdCounter = useRef<number>(1);
 
   // 游戏配置
   const [sceneId, setSceneId] = useState<string>("");
@@ -86,12 +87,11 @@ export default function GamePage() {
   const [gameResult, setGameResult] = useState<"win" | "lose" | null>(null);
   const [chosenOptions, setChosenOptions] = useState<string[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
-  const [voiceMessage, setVoiceMessage] = useState<string>(""); // 当前可播放语音的消息
   const [requestError, setRequestError] = useState<string>(""); // 请求错误信息
+  const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null); // 当前正在播放的语音URL
 
   // 派生的场景对象
   const currentScene = SCENES.find((s) => s.id === sceneId);
@@ -216,7 +216,6 @@ export default function GamePage() {
   // 开始游戏
   const startGame = useCallback(async () => {
     setCurrentAIMessage("");
-    setVoiceMessage("");
     setRequestError("");
     setIsLoading(true);
     
@@ -231,9 +230,6 @@ export default function GamePage() {
       setCurrentAIMessage(result.message);
       setOptions(result.options);
       setEmotionState(result.emotionState || "angry");
-
-      const audioUrl = await callTTSRef.current?.(result.message);
-      setTtsAudioUrl(audioUrl || null);
     } catch (error) {
       console.error("游戏请求失败:", error);
       setIsTyping(false);
@@ -249,17 +245,16 @@ export default function GamePage() {
     setIsTyping(false);
     const messageToSave = currentAIMessage;
     if (messageToSave) {
+      const messageId = `ai-${messageIdCounter.current++}`;
       setMessages((prev) => [
         ...prev,
         {
-          id: `ai-${Date.now()}`,
+          id: messageId,
           role: "ai",
           content: messageToSave,
           timestamp: Date.now(),
         },
       ]);
-      // 保留消息内容用于语音播放
-      setVoiceMessage(messageToSave);
       setCurrentAIMessage("");
     }
   }, [currentAIMessage]);
@@ -269,7 +264,7 @@ export default function GamePage() {
     if (isLoading || isTyping) return;
 
     const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: `user-${messageIdCounter.current++}`,
       role: "user",
       content: option.text,
       timestamp: Date.now(),
@@ -287,7 +282,7 @@ export default function GamePage() {
     setIsSpeaking(false);
 
     setCurrentAIMessage("");
-    setVoiceMessage(""); // 清除语音消息
+    // 保留语音消息，不要清空
     setOptions([]);
     setRound((prev) => prev + 1);
 
@@ -314,9 +309,6 @@ export default function GamePage() {
       setIsTyping(true);
       setCurrentAIMessage(result.message);
       setOptions(result.options);
-
-      const audioUrl = await callTTSRef.current?.(result.message);
-      setTtsAudioUrl(audioUrl || null);
 
       if (newAffection >= WIN_AFFECTION) {
         setGameResult("win");
@@ -361,7 +353,7 @@ export default function GamePage() {
   };
 
   // 播放语音
-  const handlePlayVoice = async (text: string) => {
+  const handlePlayVoice = async (text: string, messageId?: string) => {
     if (isSpeaking) {
       audioRef.current?.pause();
       audioRef.current = null;
@@ -369,32 +361,32 @@ export default function GamePage() {
       return;
     }
 
-    if (ttsAudioUrl) {
-      try {
-        const audio = new Audio(ttsAudioUrl);
-        audioRef.current = audio;
-        setIsSpeaking(true);
+    let audioUrl = null;
 
-        audio.onended = () => {
-          setIsSpeaking(false);
-          audioRef.current = null;
-        };
+    // 如果有消息ID，查找消息是否已有音频URL
+    if (messageId) {
+      const message = messages.find(msg => msg.id === messageId);
+      audioUrl = message?.audioUrl || null;
 
-        audio.onerror = () => {
-          setIsSpeaking(false);
-          audioRef.current = null;
-        };
-
-        await audio.play();
-      } catch {
-        setIsSpeaking(false);
+      // 如果没有音频URL，生成新的
+      if (!audioUrl) {
+        audioUrl = await callTTSRef.current?.(text);
+        if (audioUrl) {
+          // 更新消息的音频URL
+          setMessages(prevMessages => 
+            prevMessages.map(msg => 
+              msg.id === messageId ? { ...msg, audioUrl } : msg
+            )
+          );
+        }
       }
-      return;
+    } else {
+      // 对于currentAIMessage，直接生成音频URL
+      audioUrl = await callTTSRef.current?.(text);
     }
 
-    const audioUrl = await callTTSRef.current?.(text);
     if (audioUrl) {
-      setTtsAudioUrl(audioUrl);
+      setCurrentAudioUrl(audioUrl);
       try {
         const audio = new Audio(audioUrl);
         audioRef.current = audio;
@@ -402,17 +394,20 @@ export default function GamePage() {
 
         audio.onended = () => {
           setIsSpeaking(false);
+          setCurrentAudioUrl(null);
           audioRef.current = null;
         };
 
         audio.onerror = () => {
           setIsSpeaking(false);
+          setCurrentAudioUrl(null);
           audioRef.current = null;
         };
 
         await audio.play();
       } catch {
         setIsSpeaking(false);
+        setCurrentAudioUrl(null);
       }
     }
   };
@@ -575,65 +570,94 @@ export default function GamePage() {
         <div className="max-w-lg mx-auto space-y-3">
           {/* 历史消息 */}
           {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-              {msg.role === "ai" && (
-                <div className="w-9 h-9 flex-shrink-0 mr-2">{AI_AVATAR(gender)}</div>
-              )}
-              <div
-                className={`max-w-[75%] px-3 py-2 rounded-lg text-sm leading-relaxed shadow-sm ${
-                  msg.role === "ai"
-                    ? "bg-white text-[#1A1A1A] rounded-tl-none"
-                    : "bg-[#95EC69] text-[#1A1A1A] rounded-tr-none"
-                }`}
-              >
-                {msg.content}
+            <div key={msg.id} className="space-y-1">
+              <div className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                {msg.role === "ai" && (
+                  <div className="w-9 h-9 flex-shrink-0 mr-2">{AI_AVATAR(gender)}</div>
+                )}
+                <div
+                  className={`max-w-[75%] px-3 py-2 rounded-lg text-sm leading-relaxed shadow-sm ${
+                    msg.role === "ai"
+                      ? "bg-white text-[#1A1A1A] rounded-tl-none"
+                      : "bg-[#95EC69] text-[#1A1A1A] rounded-tr-none"
+                  }`}
+                >
+                  {msg.content}
+                </div>
+                {msg.role === "user" && (
+                  <div className="w-9 h-9 flex-shrink-0 ml-2">{USER_AVATAR}</div>
+                )}
               </div>
-              {msg.role === "user" && (
-                <div className="w-9 h-9 flex-shrink-0 ml-2">{USER_AVATAR}</div>
+              {/* 语音播放按钮（每个AI消息下方都显示） */}
+              {msg.role === "ai" && (
+                <div className="flex justify-start ml-11">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-white/80 backdrop-blur rounded-lg shadow-sm">
+                    <button
+                      onClick={() => handlePlayVoice(msg.content, msg.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors ${
+                        isSpeaking && currentAudioUrl === msg.audioUrl
+                          ? "bg-[#07C160] text-white"
+                          : "bg-[#F5F5F5] text-[#666666] hover:bg-[#07C160] hover:text-white"
+                      }`}
+                    >
+                      {isSpeaking ? (
+                        <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                        </svg>
+                      )}
+                      <span className="text-xs">{isSpeaking ? "播放中" : "点击听语音"}</span>
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           ))}
 
           {/* 当前AI消息 */}
           {currentAIMessage && (
-            <div className="flex justify-start">
-              <div className="w-9 h-9 flex-shrink-0 mr-2">{AI_AVATAR(gender)}</div>
-              <div className="max-w-[75%] px-3 py-2 rounded-lg rounded-tl-none bg-white text-sm leading-relaxed shadow-sm">
-                <span className="text-[#1A1A1A]">
-                  <TypewriterText
-                    text={currentAIMessage}
-                    speed={25}
-                    onComplete={handleTypingComplete}
-                  />
-                </span>
+            <div className="space-y-1">
+              <div className="flex justify-start">
+                <div className="w-9 h-9 flex-shrink-0 mr-2">{AI_AVATAR(gender)}</div>
+                <div className="max-w-[75%] px-3 py-2 rounded-lg rounded-tl-none bg-white text-sm leading-relaxed shadow-sm">
+                  <span className="text-[#1A1A1A]">
+                    <TypewriterText
+                      text={currentAIMessage}
+                      speed={25}
+                      onComplete={handleTypingComplete}
+                    />
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
-
-          {/* 语音播放按钮（打字完成后显示在消息下方） */}
-          {voiceMessage && !isTyping && (
-            <div className="flex justify-start ml-11">
-              <div className="flex items-center gap-2 px-3 py-2 bg-white/80 backdrop-blur rounded-lg shadow-sm">
-                <button
-                  onClick={() => handlePlayVoice(voiceMessage)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors ${
-                    isSpeaking
-                      ? "bg-[#07C160] text-white"
-                      : "bg-[#F5F5F5] text-[#666666] hover:bg-[#07C160] hover:text-white"
-                  }`}
-                >
-                  {isSpeaking ? (
-                    <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                    </svg>
-                  )}
-                  <span className="text-xs">{isSpeaking ? "播放中" : "点击听语音"}</span>
-                </button>
-              </div>
+              {/* 语音播放按钮（当前AI消息下方） */}
+              {!isTyping && (
+                <div className="flex justify-start ml-11">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-white/80 backdrop-blur rounded-lg shadow-sm">
+                    <button
+                      onClick={() => handlePlayVoice(currentAIMessage)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-colors ${
+                        isSpeaking
+                          ? "bg-[#07C160] text-white"
+                          : "bg-[#F5F5F5] text-[#666666] hover:bg-[#07C160] hover:text-white"
+                      }`}
+                    >
+                      {isSpeaking ? (
+                        <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                        </svg>
+                      )}
+                      <span className="text-xs">{isSpeaking ? "播放中" : "点击听语音"}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -652,9 +676,9 @@ export default function GamePage() {
           )}
 
           {/* 重试按钮 */}
-          {isLoading === false && isTyping === false && !currentAIMessage && (
+          {isLoading === false && isTyping === false && !currentAIMessage && requestError && (
             <div className="flex flex-col items-center gap-4 py-8">
-              <p className="text-[#999999]">{requestError || "连接不稳定"}</p>
+              <p className="text-[#999999]">{requestError}</p>
               <button
                 onClick={() => {
                   setRound((prev) => Math.max(1, prev - 1)); // 回退轮次
