@@ -190,15 +190,31 @@ export default function GamePage() {
     };
   }
 
+  // 过滤文本中的括号内容（神态动作描述）
+  const cleanTextForTTS = (text: string): string => {
+    // 移除所有括号内的内容，包括中英文括号
+    return text
+      .replace(/（[^）]*）/g, "")  // 移除中文括号内容
+      .replace(/\([^)]*\)/g, "")   // 移除英文括号内容
+      .trim();
+  };
+
   if (!callTTSRef.current) {
     callTTSRef.current = async (text: string): Promise<string | null> => {
       try {
+        // 清理文本，移除括号内的神态动作描述
+        const cleanedText = cleanTextForTTS(text);
+        
+        if (!cleanedText) {
+          return null;
+        }
+
         const speaker = VOICE_OPTIONS.find((v) => v.id === voiceType)?.speaker || "zh_female_xiaohe_uranus_bigtts";
 
         const response = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, speaker }),
+          body: JSON.stringify({ text: cleanedText, speaker }),
         });
 
         const data = await response.json();
@@ -398,17 +414,24 @@ export default function GamePage() {
           audioRef.current = null;
         };
 
-        audio.onerror = () => {
+        audio.onerror = (e) => {
+          console.error("音频播放失败:", e);
           setIsSpeaking(false);
           setCurrentAudioUrl(null);
           audioRef.current = null;
+          // 显示错误提示
+          alert("语音播放失败，请检查网络连接后重试");
         };
 
         await audio.play();
-      } catch {
+      } catch (error) {
+        console.error("音频播放异常:", error);
         setIsSpeaking(false);
         setCurrentAudioUrl(null);
+        alert("语音播放失败，请检查网络连接后重试");
       }
+    } else {
+      alert("语音生成失败，请重试");
     }
   };
 
