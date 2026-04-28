@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { SCENES, VOICE_OPTIONS, VoiceType } from "@/lib/types";
 
@@ -16,6 +16,8 @@ export default function HomePage() {
   const [selectedScene, setSelectedScene] = useState<string | null>(null);
   const [selectedVoice, setSelectedVoice] = useState<VoiceType>("gentle_female");
   const [user, setUser] = useState<User | null>(null);
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     // 检查登录状态
@@ -47,6 +49,61 @@ export default function HomePage() {
   const handleLogout = () => {
     localStorage.removeItem("user");
     setUser(null);
+  };
+
+  // 悬停预览声音
+  const handleVoicePreview = async (voice: typeof VOICE_OPTIONS[0]) => {
+    // 如果正在预览其他声音，先停止
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+
+    // 避免重复预览同一种声音
+    if (previewingVoice === voice.id) {
+      setPreviewingVoice(null);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `你好，我是${voice.label}`, speaker: voice.speaker }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.audioUri) {
+        const audio = new Audio(data.audioUri);
+        previewAudioRef.current = audio;
+        setPreviewingVoice(voice.id);
+
+        audio.onended = () => {
+          setPreviewingVoice(null);
+          previewAudioRef.current = null;
+        };
+
+        audio.onerror = () => {
+          setPreviewingVoice(null);
+          previewAudioRef.current = null;
+        };
+
+        await audio.play();
+      }
+    } catch (error) {
+      console.error("声音预览失败:", error);
+      setPreviewingVoice(null);
+    }
+  };
+
+  // 停止预览
+  const stopVoicePreview = () => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    setPreviewingVoice(null);
   };
 
   return (
@@ -221,6 +278,8 @@ export default function HomePage() {
                 <button
                   key={voice.id}
                   onClick={() => handleVoiceSelect(voice.id)}
+                  onMouseEnter={() => handleVoicePreview(voice)}
+                  onMouseLeave={stopVoicePreview}
                   className={`w-full p-4 rounded-lg transition-all active:scale-[0.99] text-left ${
                     selectedVoice === voice.id
                       ? "bg-[#E8F5E9] border-2 border-[#07C160]"
@@ -238,7 +297,10 @@ export default function HomePage() {
                     <span className={`font-medium ${selectedVoice === voice.id ? "text-[#07C160]" : "text-[#1A1A1A]"}`}>
                       {voice.label}
                     </span>
-                    {selectedVoice === voice.id && (
+                    {previewingVoice === voice.id && (
+                      <span className="ml-auto text-[#07C160] animate-pulse">🔊</span>
+                    )}
+                    {selectedVoice === voice.id && previewingVoice !== voice.id && (
                       <span className="ml-auto text-[#07C160]">✓</span>
                     )}
                   </div>
