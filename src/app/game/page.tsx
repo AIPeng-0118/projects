@@ -68,6 +68,7 @@ export default function GamePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const messageIdCounter = useRef<number>(1);
+  const voiceTypeRef = useRef<VoiceType>("gentle_female"); // 使用ref存储最新的声音类型
 
   // 游戏配置
   const [sceneId, setSceneId] = useState<string>("");
@@ -107,6 +108,7 @@ export default function GamePage() {
     setSceneId(scene);
     setGender(gen);
     setVoiceType(voice);
+    voiceTypeRef.current = voice; // 同步更新ref
 
     // 检查登录状态
     const savedUser = localStorage.getItem("user");
@@ -201,7 +203,7 @@ export default function GamePage() {
           return null;
         }
 
-        const speaker = VOICE_OPTIONS.find((v) => v.id === voiceType)?.speaker || "zh_female_xiaohe_uranus_bigtts";
+        const speaker = VOICE_OPTIONS.find((v) => v.id === voiceTypeRef.current)?.speaker || "zh_female_xiaohe_uranus_bigtts";
 
         const response = await fetch("/api/tts", {
           method: "POST",
