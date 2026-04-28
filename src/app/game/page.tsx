@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { TypewriterText } from "@/components/TypewriterText";
 import { OptionButton } from "@/components/OptionButton";
+import { cleanTextForTTS } from "@/lib/utils";
 import {
   SCENES,
   VOICE_OPTIONS,
@@ -189,15 +190,6 @@ export default function GamePage() {
       }
     };
   }
-
-  // 过滤文本中的括号内容（神态动作描述）
-  const cleanTextForTTS = (text: string): string => {
-    // 移除所有括号内的内容，包括中英文括号
-    return text
-      .replace(/（[^）]*）/g, "")  // 移除中文括号内容
-      .replace(/\([^)]*\)/g, "")   // 移除英文括号内容
-      .trim();
-  };
 
   if (!callTTSRef.current) {
     callTTSRef.current = async (text: string): Promise<string | null> => {

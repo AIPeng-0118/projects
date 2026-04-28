@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { TTSClient, Config, HeaderUtils } from "coze-coding-dev-sdk";
+import { cleanTextForTTS } from "@/lib/utils";
 import { TTSRequest, TTSResponse } from "@/lib/types";
-
-// 过滤文本中的括号内容（神态动作描述）
-const cleanTextForTTS = (text: string): string => {
-  return text
-    .replace(/（[^）]*）/g, "")  // 移除中文括号内容
-    .replace(/\([^)]*\)/g, "")   // 移除英文括号内容
-    .trim();
-};
 
 export async function POST(request: NextRequest): Promise<NextResponse<TTSResponse>> {
   try {
